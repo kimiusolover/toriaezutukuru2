@@ -1,0 +1,92 @@
+name: Build Package and Update Repo DB
+
+# トリガー：mainブランチへのプッシュ、または手動（workflow_dispatch）
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/PKGBUILD' # PKGBUILDが更新されたときに動く
+  workflow_dispatch:  # GitHubの画面から手動で実行したい場合用
+
+jobs:
+  build-and-update:
+    runs-on: ubuntu-latest
+    # 処理全体のベースに公式のArch Linux Dockerコンテナを使う
+    container:
+      image: archlinux:latest
+
+    steps:
+      # 1. リポジトリのソースコードをチェックアウト
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Arch Linux システムの初期化と依存ツールの導入
+      - name: Initialize system & Install tools
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git sudo
+
+      # 3. makepkg 用のダミーユーザー作成（Archではrootでのmakepkgが禁止されているため）
+      - name: Setup build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          # コンテナ内のワークスペース全体の所有権を builder ユーザーに変更
+          chown -R builder:builder ./
+
+      # 4. パッケージのビルドとDBへの追加処理
+      - name: Build packages and update DB
+        run: |
+          sudo -u builder bash -c '
+            set -e
+            
+            # --- 1. PKGBUILD があるディレクトリを探してビルド ---
+            # リポジトリ内のすべての PKGBUILD を検索してループ処理
+            find . -name PKGBUILD | while read -r pkgbuild_path; do
+              pkg_dir=$(dirname "$pkgbuild_path")
+              echo "📦 Building package in $pkg_dir ..."
+              
+              cd "$pkg_dir"
+              # 依存関係を同期しつつパッケージをビルド
+              makepkg -s --noconfirm
+              
+              # ビルドされた成果物（.pkg.tar.zst）をリポジトリルートに移動
+              mv *.pkg.tar.zst ../../ 2>/dev/null || mv *.pkg.tar.zst ../ 2>/dev/null || true
+              cd - > /dev/null
+            done
+
+            # --- 2. データベース（myrepo）の更新 ---
+            echo "🗄️ Updating custom repository database..."
+            REPO_NAME="myrepo"
+            DB_FILE="${REPO_NAME}.db.tar.zst"
+
+            # 古いパッケージ実ファイルを自動削除しつつ、DBを新規構築
+            repo-add --remove "$DB_FILE" *.pkg.tar.zst
+
+            # Gitプッシュ時に壊れるシンボリックリンク問題を実ファイル複製で回避
+            rm -f "${REPO_NAME}.db" "${REPO_NAME}.files"
+            cp "$DB_FILE" "${REPO_NAME}.db"
+            cp "${REPO_NAME}.files.tar.zst" "${REPO_NAME}.files"
+            
+            echo "✅ Build and DB optimization completed successfully."
+          '
+
+      # 5. 生成された新しいバイナリとDBファイルをGitHubへ自動プッシュ
+      - name: Commit and push changes
+        run: |
+          # Gitのコミット用ユーザー設定（GitHub Actionダミー）
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          # 変更（新しいパッケージ、更新された.dbファイル）をステージング
+          git add *.pkg.tar.zst myrepo.db* myrepo.files*
+          
+          # 変更がある場合のみコミット＆プッシュを実行する（空コミットエラー防止）
+          if ! git diff --cached --quiet; then
+            git commit -m "Automated build: Update packages and repo DB [skip ci]"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
