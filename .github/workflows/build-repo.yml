@@ -72,21 +72,24 @@ jobs:
             echo "✅ Build and DB optimization completed successfully."
           '
 
-      # 5. 生成された新しいバイナリとDBファイルをGitHubへ自動プッシュ
+            # 5. 生成された新しいバイナリとDBファイルをGitHubへ自動プッシュ
       - name: Commit and push changes
         run: |
-          # Gitのコミット用ユーザー設定（GitHub Actionダミー）
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          # 最初にこのディレクトリを安全な場所としてGitに登録する（エラー対策）
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          # Gitのコミット用ユーザー設定
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@://github.com"
 
           # 変更（新しいパッケージ、更新された.dbファイル）をステージング
           git add *.pkg.tar.zst myrepo.db* myrepo.files*
           
-          # 変更がある場合のみコミット＆プッシュを実行する（空コミットエラー防止）
+          # 変更がある場合のみコミット＆プッシュを実行する
           if ! git diff --cached --quiet; then
             git commit -m "Automated build: Update packages and repo DB [skip ci]"
             git push origin main
           else
             echo "No changes to commit."
           fi
+
