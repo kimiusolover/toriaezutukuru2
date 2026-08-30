@@ -1,33 +1,48 @@
-pkgname=foldersync-bin
-_product_name=foldersync-desktop
-pkgver=2.11.0
+# Maintainer: routerctl contributors
+
+_pkgname=routerctl
+pkgname=${_pkgname}-git
+pkgver=r10.g92f1088
 pkgrel=1
-epoch=1
-pkgdesc='folder-synchronization-software (binary release)'
-arch=(x86_64 aarch64)
-url='https://foldersync.io/desktop'
-license=('unknown')
-depends=(rsync)
-optdepends=()
-_product_logo="tacit-dynamics-aps-foldersync-desktop"
-provides=("${pkgname%-bin}=$pkgver" 'foldersync')
-conflicts=("${pkgname%-bin}")
+pkgdesc='Host-side orchestrator for router OS manifests, releases, and regulatory evidence'
+arch=('x86_64' 'aarch64')
+url='https://github.com/kimiusolover/routerctl'
+license=('MIT')
+depends=('glibc')
+makedepends=('git' 'go')
+checkdepends=('imagemagick' 'tesseract')
+provides=("${_pkgname}=${pkgver}")
+conflicts=("${_pkgname}")
+source=("git+${url}.git")
+b2sums=('SKIP')
 
-if [ "$CARCH" = x86_64 ]; then
-  source_x86_64=("https://github.com/tacitdynamics/foldersync-desktop-production/releases/download/${pkgver}/foldersync-desktop-${pkgver}-linux-amd64.tar.gz")
-elif [ "$CARCH" = aarch64 ]; then
-  source_aarch64=("https://github.com/tacitdynamics/foldersync-desktop-production/releases/download/${pkgver}/foldersync-desktop-${pkgver}-linux-aarch64.tar.gz")
-fi
+pkgver() {
+  cd "${srcdir}/${_pkgname}"
+  printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
 
-sha256sums_x86_64=('7c6b822a3ab8f6e67bcbf38910e7521ca03ec2567a837b2ce23a2861b8708879')
-sha256sums_aarch64=()
+prepare() {
+  cd "${srcdir}/${_pkgname}"
+  go mod download
+}
 
+build() {
+  cd "${srcdir}/${_pkgname}"
+  local build_date
+  build_date=$(date -u -d "@${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}" +%Y-%m-%dT%H:%M:%SZ)
+  go build -trimpath -buildmode=pie -mod=readonly \
+    -ldflags="-X main.version=${pkgver} -X main.commit=$(git rev-parse --short=12 HEAD) -X main.date=${build_date}" \
+    -o routerctl ./cmd/routerctl
+}
+
+check() {
+  cd "${srcdir}/${_pkgname}"
+  go test ./...
+}
 
 package() {
-rsync -rP ${srcdir}/ ${pkgdir}
-
-	for _size in 16x16 32x32 44x44 64x64 128x128 150x150 256x256 512x512 1024x1024; do
-	[ -e "${size/x*/}.png" ] || continue
-		install -Dm0644 "$pkgdir/$_product_name-$pkgver/$_product_logo/${size/x*/}.png" "/usr/share/icons/hicolor/$size/apps/$_product_logo.png"
-	done
+  cd "${srcdir}/${_pkgname}"
+  install -Dm755 routerctl "${pkgdir}/usr/bin/routerctl"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${_pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${_pkgname}/README.md"
 }
